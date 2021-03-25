@@ -1,36 +1,34 @@
 // go mod init main
 // go run example.go
 package main
-
 import (
 	"fmt"
-	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
-	"io"
-	"reflect"
+	"github.com/neo4j/neo4j-go-driver/neo4j" //Go 1.8
 )
-
 func main() {
-	results, err := runQuery("bolt://<HOST>:<BOLTPORT>", "neo4j", "<USERNAME>", "<PASSWORD>")
+	s, err := runQuery("bolt://<HOST>:<BOLTPORT>", "<USERNAME>", "<PASSWORD>")
 	if err != nil {
 		panic(err)
 	}
-	for _, result := range results {
-		fmt.Println(result)
-	}
+	fmt.Println(s)
 }
-
-func runQuery(uri, database, username, password string) (result []string, err error) {
-	driver, err := neo4j.NewDriver(uri, neo4j.BasicAuth(username, password, ""))
+func runQuery(uri, username, password string) ([]string, error) {
+	configForNeo4j4 := func(conf *neo4j.Config) { conf.Encrypted = false }
+	driver, err := neo4j.NewDriver(uri, neo4j.BasicAuth(username, password, ""), configForNeo4j4)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {err = handleClose(driver, err)}()
-	session := driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead, DatabaseName: database})
-	defer func() {err = handleClose(session, err)}()
+	defer driver.Close()
+	sessionConfig := neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead, DatabaseName: "neo4j"}
+	session, err := driver.NewSession(sessionConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
 	results, err := session.ReadTransaction(func(transaction neo4j.Transaction) (interface{}, error) {
 		result, err := transaction.Run(
 			`
-			MATCH (m:Movie {title:$movie})<-[:RATED]-(u:User)-[:RATED]->(rec:Movie) 
+			MATCH (m:Movie {title:$movie})<-[:RATED]-(u:User)-[:RATED]->(rec:Movie)
 			RETURN distinct rec.title AS recommendation LIMIT 20
 			`, map[string]interface{}{
 				"movie": "Crimson Tide",
@@ -42,7 +40,7 @@ func runQuery(uri, database, username, password string) (result []string, err er
 		for result.Next() {
 			value, found := result.Record().Get("recommendation")
 			if found {
-				arr = append(arr, value.(string))
+			  arr = append(arr, value.(string))
 			}
 		}
 		if err = result.Err(); err != nil {
@@ -53,17 +51,5 @@ func runQuery(uri, database, username, password string) (result []string, err er
 	if err != nil {
 		return nil, err
 	}
-	result = results.([]string)
-	return result, err
-}
-
-func handleClose(closer io.Closer, previousError error) error {
-	err := closer.Close()
-	if err == nil {
-		return previousError
-	}
-	if previousError == nil {
-		return err
-	}
-	return fmt.Errorf("%v closure error occurred:\n%s\ninitial error was:\n%w", reflect.TypeOf(closer), err.Error(), previousError)
+	return results.([]string), err
 }
